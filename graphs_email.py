@@ -2,30 +2,12 @@
 
 import time
 import datetime
-day = time.strftime("%m/%d/%Y")
-current = datetime.datetime.now()
-mnth = current.strftime('%B')
-
-#########################
-### CUSTOM PARAMETERS ###
-from_email = 'qgi@focus.org'
-cc = ['brian.preisler@focus.org']
-reg_dict = {}
-
-reg_dict['Brian Preisler'] = ['brian.preisler@focus.org', 'Great North%',575]
-#all other recipient emails
-
-to_emails = [to_email] + cc
-
-
-#########################
-
-"""
-    Import all required libraries
-"""
-import MySQLdb
+import pymysql
 import xlsxwriter
 import smtplib
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 import os
 import mimetypes
 from email.mime.multipart import MIMEMultipart
@@ -40,18 +22,45 @@ from dateutil.relativedelta import relativedelta
 import matplotlib.pyplot as plt
 from PIL import Image
 
+day = time.strftime("%m/%d/%Y")
+current = datetime.datetime.now()
+mnth = current.strftime('%B')
 
-for i in reg_dict:
-    strg = reg_dict[i][1]
-    subject = 'FYI: Update on %s DM Goal' %strg
-    
+#########################
+### CUSTOM PARAMETERS ###
+from_email = ''
+cc = []
+reg_dict = {}
+text = ""
+
+to_send_list_full = pd.read_csv("C:\\Users\\brian.preisler\\Dropbox\\Growth\\Data Analysis\\Python Projects\\DM Chart Emails\\to_send_list.csv")
+
+to_send_list_test = pd.read_csv("C:\\Users\\brian.preisler\\Dropbox\\Growth\\Data Analysis\\Python Projects\\DM Chart Emails\\to_send_list_test.csv")
+
+to_send_list_full_test = pd.read_csv("C:\\Users\\brian.preisler\\Dropbox\\Growth\\Data Analysis\\Python Projects\\DM Chart Emails\\to_send_list_full_test.csv")
+
+campus_goals = pd.read_csv("C:\\Users\\brian.preisler\\Dropbox\\Growth\\Data Analysis\\Python Projects\\DM Chart Emails\\campus_goals.csv")
+
+campus_goals = campus_goals.set_index('campus', inplace = False)
+
+to_send_list = to_send_list_full
+
+print to_send_list
+
+for index,row in to_send_list.iterrows():
+    email = row['email']
+    area = row['area']
+    area_goal = row['goal']
+
+    subject = 'FYI: Update on %s DM Goal' %area
+
     """
-        Create Acts database connection ()
+    Create Acts database connection ()
     """
-    db=MySQLdb.connect( host="acts247.focus.org",
-                        user="python",
+    db=pymysql.connect( host="",
+                        user="",
                         passwd="",
-                        db="acts247",
+                        db="",
                         charset='utf8',
                         use_unicode=True)
     
@@ -59,229 +68,173 @@ for i in reg_dict:
     """
         Create cursor which will allow use to execute a query
     """
-    c=db.cursor()
-    c2=db.cursor()
 
+    
+    
     """
         Actual SQL queries to run
     """
+    c=db.cursor()
+    
     c.execute("""     SELECT  C.name as Campus,
-        count(distinct case when DS.discipleship_type_id in (4,5) THEN DS.user_id END) as 'Male Ds'	
+        count(distinct case when DS.discipleship_type_id in (4,5) THEN DS.user_id END) as 'Ds',
+        sub.Sept
         FROM discipleship_statuses as DS
         LEFT JOIN users as U on U.id = DS.user_id
         LEFT JOIN campuses as C on C.id = U.campus_id
         left join regions as R on R.id = C.region_id
+        join 
+            (SELECT  C.name as Campus, C.id as id,
+            count(distinct case when DS.discipleship_type_id in (4,5) THEN DS.user_id END) as Sept
+            FROM discipleship_statuses as DS
+            LEFT JOIN users as U on U.id = DS.user_id
+            LEFT JOIN campuses as C on C.id = U.campus_id
+            left join regions as R on R.id = C.region_id
+            WHERE (DS.end_date IS NULL OR DS.end_date >= '2017-09-01')
+            AND DS.start_date <= '2017-09-31'
+            AND C.region_id NOT IN (10,26,44)
+            and R.name like %s
+            AND (U.user_role_type_id = 3  OR (C.region_id = 45 and U.user_role_type_id IN (4,6) and U.is_affiliate =1))
+            group by C.name) as sub on sub.id = C.id      
+        
         WHERE (DS.end_date IS NULL OR DS.end_date >= DATE_SUB(CURRENT_DATE, INTERVAL DAYOFMONTH(CURRENT_DATE)-1 DAY))
         AND DS.start_date <= curdate()
         AND C.region_id NOT IN (10,26,44)
         and R.name LIKE %s
         AND (U.user_role_type_id = 3  OR (C.region_id = 45 and U.user_role_type_id IN (4,6) and U.is_affiliate =1))
-                    """, (reg_dict[i][1]))
+        group by C.name
+                    """, (area,area))
 
-    c2.execute("""  SELECT  C.name as Campus,
-        count(distinct case when DS.discipleship_type_id in (4,5) THEN DS.user_id END) as 'Male Ds'
-        FROM discipleship_statuses as DS
-        LEFT JOIN users as U on U.id = DS.user_id
-        LEFT JOIN campuses as C on C.id = U.campus_id
-        left join regions as R on R.id = C.region_id
-        WHERE (DS.end_date IS NULL OR DS.end_date >= '2016-09-01')			
-        AND DS.start_date <= '2016-09-31'
-        AND C.region_id NOT IN (10,26,44)
-        and R.name like %s
-        AND (U.user_role_type_id = 3  OR (C.region_id = 45 and U.user_role_type_id IN (4,6) and U.is_affiliate =1))
-                    """, (reg_dict[i][1]))
 
     """
         Fetch entire row from cursor and store into result object
     """
     result = c.fetchall()
-    result2 = c2.fetchall()
-    current_DMs = result[0][1]
-    sept = result2[0][1]
-    goal_17 = reg_dict[i][2]
-    pergoal = 100*(goal_17 - current_DMs)/goal_17
-
-    """
-        Close database connection
-    """
-    db.close()
-
-    """
-        Open passwords file which holds the QGI sendgrid password
-    """
-    file = open("C:\\Users\\brian.preisler\\Desktop\\pythontxtfile.txt", "r")
-
-    """
-        Extract contents of file
-    """
-    Mypassword = file.read()
-
-    """
-        Close the password file to prevent corruption and locking
-    """
-    file.close()
+    c.close()
 
 
-    #graph plot
-
-    import plotly.plotly as py
-    import plotly.graph_objs as go
-    import plotly
-    plotly.tools.set_credentials_file(username='bjpreisler', api_key='w7hhb1ym9y')
-
-    trace1 = go.Bar(
-        x=['Sept DMs','Current Month DMs', 'April Goal DMs'],
-        y=[sept,current_DMs, goal_17],
-        marker=dict(
-            color=['rgb(55, 83, 109)', 'rgb(55, 83, 109)',
-               'rgb(185,211,238)']),
-    )
     
-    x = ['Sept DMs','Current DMs', 'April Goal DMs']
-    y = [sept,current_DMs,goal_17]
-    data = [trace1]
-    layout = go.Layout(
-            annotations=[
-            dict(x=xi,y=yi,
-                 text=str(yi),
-                 xanchor='center',
-                 yanchor='bottom',
-                 showarrow=False,
-            ) for xi, yi in zip(x, y)],   
+    both = {}
+    
+  
+    for a in result:
+        name = a[0]
+        current_DMs = int(a[1])
+        sept = int(a[2])
+        
+        goal = campus_goals.loc[name]['goal']
+        
 
-        title='%s DM Progress' %strg,
-        xaxis=dict(
-            tickfont=dict(
-                size=14,
-                color='rgb(107, 107, 107)'
-            )
-        ),
-        yaxis=dict(
-            title='DM',
-            titlefont=dict(
-                size=16,
-                color='rgb(107, 107, 107)'
-            ),
-            tickfont=dict(
-                size=14,
-                color='rgb(107, 107, 107)'
-            )
-        ),
-        legend=dict(
-            x=0,
-            y=1.0,
-            bgcolor='rgba(255, 255, 255, 0)',
-            bordercolor='rgba(255, 255, 255, 0)'
-        ),
-        bargap=0.1,
-        bargroupgap=0.3
-    )
+        """
+            Open passwords file which holds the QGI sendgrid password
+        """
+        file = open("", "r")
+
+        """
+            Extract contents of file
+        """
+        Mypassword = file.read()
+
+        """
+            Close the password file to prevent corruption and locking
+        """
+        file.close()
 
 
-    fig = go.Figure(data=data, layout=layout)
+        #graph plot
+        sns.set_style("whitegrid")
+        
+        x = ['Sept DMs', 'Current DMs', 'April Goal DMs']
+        y = [sept, current_DMs, goal]
+        
+        
+        current_palette = sns.color_palette("Blues")
+        sns.set_palette(current_palette)
+        graph = sns.barplot(x, y)
+        graph.grid(False)
+        graph.set_title(name + ' DM Growth', size = 16)
+        
+        for p in graph.patches:
+            height = p.get_height()
+            graph.text(p.get_x()+p.get_width()/2.,
+            height+ 0.05,
+            '{:1.2f}'.format(height),
+            ha="center") 
+        
+        
+        plt.savefig(a[0] + '.png')
+        #plt.show()
 
-    py.image.save_as(fig, filename='DM.png')
-
-    from IPython.display import Image
-    Image('DM.png')
-
-
-
+    
     """
         Function to send email
     """
-    def send_mail(send_from, send_to, subject, text, files=None,
-                              data_attachments=None, images=None):
+        # Send an HTML email with an embedded image and a plain text message for
+    # email clients that don't want to display the HTML.
 
-        """
-            Email sending parameters
-        """
-        server = 'smtp.office365.com'
-        port = 587
-        tls = True
-        username = 'brian.preisler@focus.org'
-        password = Mypassword
+    from email.MIMEMultipart import MIMEMultipart
+    from email.MIMEText import MIMEText
+    from email.MIMEImage import MIMEImage
 
-        COMMASPACE = ', '
+    # Define these once; use them twice!
+    strFrom = ''
+    strTo = ''
 
-        if files is None:
-            files = []
+    # Create the root message and fill in the from, to, and subject headers
+    msgRoot = MIMEMultipart('related')
+    msgRoot['Subject'] = subject
+    msgRoot['From'] = strFrom
+    msgRoot['To'] = strTo
+    msgRoot.preamble = 'An Update on DM Growth'
 
-        if images is None:
-            images = []
+    # Encapsulate the plain and HTML versions of the message body in an
+    # 'alternative' part, so message agents can decide which they want to display.
+    msgAlternative = MIMEMultipart('alternative')
+    msgRoot.attach(msgAlternative)
 
-        if data_attachments is None:
-            data_attachments = []
-
-        msg = MIMEMultipart('related')
-        msg2 = MIMEMultipart('related')
-        msg['From'] = send_from
-        msg['To'] = send_to if isinstance(send_to, basestring) else COMMASPACE.join(send_to)
-        msg['Date'] = formatdate(localtime=True)
-        msg['Subject'] = subject
-
-
-
-        # Encapsulate the plain and HTML versions of the message body in an
-        # 'alternative' part, so message agents can decide which they want to display.
-        msgAlternative = MIMEMultipart('alternative')
-        msg2Alternative = MIMEMultipart('alternative')
-        msg.attach(msgAlternative)
-        msg2.attach(msg2Alternative)
-
-        msgText = MIMEText('This is the alternative plain text message.')
-        msgAlternative.attach(msgText)
-
-        # We reference the image in the IMG SRC attribute by the ID we give it below
-        msgText = MIMEText('<img src="cid:image1">', 'html')
-        msgAlternative.attach(msgText)
-
-        # This example assumes the image is in the current directory
-        fp = open('DM.png', 'rb')
-        fp2 = open('BSP.png', 'rb')
+    msgText = MIMEText('This is the alternative plain text message.')
+    msgAlternative.attach(msgText)
+    
+    emailtext = ''
+    counter = 0
+    imgcounter = 1
+    
+    for b in result:
+        
+        pic = str(result[counter][0])+'.png'
+        #pic2 = str(result[1][0])+'.png'
+        
+        fp = open(pic, 'rb')
         msgImage = MIMEImage(fp.read())
-        msgImage2 = MIMEImage(fp2.read())
         fp.close()
-        fp2.close()
-
+        image = '<image' + str(imgcounter) + '>'
         # Define the image's ID as referenced above
-        msgImage.add_header('Content-ID', '<image1>')
-        msgImage2.add_header('Content-ID', '<image1>')
-        msg.attach(msgImage)
-        msg2.attach(msgImage2)
+        msgImage.add_header('Content-ID', image)
+        msgRoot.attach(msgImage)
+        counter += 1
+        emailtext += '<br><img src="cid:image' + str(imgcounter) + '"><br>'
+        imgcounter += 1
+        
+    
+    # We reference the image in the IMG SRC attribute by the ID we give it below
+    msgText = MIMEText(' %s   \
+                       <p><em><sup class="versenum">&nbsp; \
+                       </sup>I planted, Apollos watered, but God gave the growth. 1 Cor 3:6</em></p>' %emailtext, 'html')
+    msgAlternative.attach(msgText)
 
-        ##################################
+    # Send the email (this example assumes SMTP authentication is required)
+    import smtplib
+    smtp = smtplib.SMTP()
+    smtp.connect('smtp.office365.com', 587)
+    smtp.ehlo()
+    smtp.starttls()
+    smtp.ehlo()
+    smtp.login('brian.preisler@focus.org', Mypassword)
+    smtp.ehlo()
+    smtp.sendmail(strFrom, strTo, msgRoot.as_string())
+    smtp.quit()
+    print "Email sent to " + area + " at " + email
 
-        for f in files:
-            part = MIMEBase('application', "octet-stream")
-            part.set_payload( open(f,"rb").read() )
-            Encoders.encode_base64(part)
-            part.add_header('Content-Disposition', 'attachment; filename="%s"' % os.path.basename(f))
-            msg.attach(part)
+db.close()
 
-        for f in data_attachments:
-            part = MIMEBase('application', "octet-stream")
-            part.set_payload( f['data'] )
-            Encoders.encode_base64(part)
-            part.add_header('Content-Disposition', 'attachment; filename="%s"' % f['filename'])
-            msg.attach(part)
-
-        for (n, i) in enumerate(images):
-            fp = open(i, 'rb')
-            msgImage = MIMEImage(fp.read())
-            fp.close()
-            msgImage.add_header('Content-ID', '<image{0}>'.format(str(n+1)))
-            msg.attach(msgImage)
-            msg2.attach(msgImage2)
-
-        smtp = smtplib.SMTP(server, int(port))
-        if tls:
-            smtp.starttls()
-
-        smtp.login(username, password)
-        smtp.sendmail(send_from, send_to, msg.as_string())
-        smtp.close()
-
-
-
-    send_mail(from_email,reg_dict[i][0], subject, text)
+print "Script Complete"
