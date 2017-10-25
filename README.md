@@ -1,8 +1,9 @@
 # graph_email
 
-Define recipient dictionary  
+Upload recipient dictionary  
 Establish database connection  
 Query needed results  
-Build results into graph using plotly  
+Store in Pandas df
+Build results into graph during loop
 Attach png to email  
 Send email using MIME library  
